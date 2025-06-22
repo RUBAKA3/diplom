@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\FreelancerApplication;
 use App\Models\Order;
 use App\Models\OrderFrelanser;
+use App\Models\Skill;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -126,11 +127,22 @@ public function getFreelancerOrders($freelancerId)
         return response()->json($application, 201);
     }
      public function inde()
-    {
-        $applications = FreelancerApplication::with('user')->get();
-        
-        return response()->json($applications);
-    }
+{
+    $skillsMap = Skill::pluck('name', 'id')->toArray();
+    
+    $applications = FreelancerApplication::with('user')
+        ->get()
+        ->map(function ($application) use ($skillsMap) {
+            // Преобразуем ID навыков в названия
+            $application->skills = array_map(function ($skillId) use ($skillsMap) {
+                return $skillsMap[$skillId] ?? 'Unknown Skill';
+            }, $application->skills);
+            
+            return $application;
+        });
+    
+    return response()->json($applications);
+}
 
     public function check()
     {
