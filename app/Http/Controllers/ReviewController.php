@@ -101,9 +101,9 @@ class ReviewController extends Controller
     $order = Order::findOrFail($orderId);
     $user = Auth::user();
     
-    // 2. Проверка прав (раскомментируйте если нужно)
+    // 2. Проверка прав
     if ($order->client_id != $user->id) {
-        return response()->json([''], 403);
+        return response()->json(['message' => 'Доступ запрещен'], 403);
     }
     
     // 3. Проверка статуса
@@ -117,7 +117,8 @@ class ReviewController extends Controller
     // 4. Валидация
     $validator = Validator::make($request->all(), [
         'rating' => 'required|integer|between:1,5',
-        'comment' => 'nullable|string|max:1000'
+        'comment' => 'nullable|string|max:1000',
+        'additional_amount' => 'nullable|numeric|min:0' // Добавляем валидацию для дополнительной суммы
     ]);
     
     if ($validator->fails()) {
@@ -127,27 +128,34 @@ class ReviewController extends Controller
         ], 422);
     }
     
-    // 5. Обновляем статус заказа
+    // 5. Добавляем сумму к цене заказа, если она указана
+    if ($request->has('additional_amount') && $request->additional_amount > 0) {
+        $order->price += $request->additional_amount;
+        // Можно также добавить запись в историю изменений, если нужно
+        // $order->price_history = [...$order->price_history, ['amount' => $request->additional_amount, 'date' => now()]];
+    }
+    
+    // 6. Обновляем статус заказа
     $order->status = 'completed';
     $order->updated_at = now();
     $order->save();
     
-    // 6. Создаем отзыв
+    // 7. Создаем отзыв
     Review::create([
         'order_id' => $order->id,
-        'user_id' => $user->id, // Добавляем user_id
+        'user_id' => $user->id,
         'target_user_id' => $user->id,
         'rating' => $request->rating,
         'comment' => $request->comment,
     ]);
     
-    // 7. Обновляем рейтинг фрилансера
+    // 8. Обновляем рейтинг фрилансера
     $this->updateFreelancerRating($order->freelancer_id);
     
     return response()->json([
         'success' => true,
         'message' => 'Заказ успешно закрыт',
-        'order' => $order->fresh() // Возвращаем обновленные данные
+        'order' => $order->fresh()
     ]);
 }
     

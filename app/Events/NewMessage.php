@@ -3,25 +3,35 @@
 namespace App\Events;
 
 use Illuminate\Broadcasting\Channel;
+use Illuminate\Broadcasting\InteractsWithSockets;
+use Illuminate\Broadcasting\PresenceChannel;
+use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Foundation\Events\Dispatchable;
+use Illuminate\Queue\SerializesModels;
+use App\Models\Message;
 
-class NewMessage implements ShouldBroadcast  // <-- Важно!
+class NewMessage implements ShouldBroadcast
 {
+    use Dispatchable, InteractsWithSockets, SerializesModels;
+
     public $message;
 
-    public function __construct($message)
+    public function __construct(Message $message)
     {
         $this->message = $message;
     }
 
     public function broadcastOn()
     {
-        return new Channel('chat.');  // Или PrivateChannel
+        return new PrivateChannel('chat.' . $this->message->chat_id);
     }
 
-    // Опционально: кастомное имя события
-    public function broadcastAs()
-    {
-        return 'NewMessage';
-    }
+    // app/Events/NewMessage.php
+public function broadcastWith()
+{
+    return [
+        'message' => $this->message // Убедитесь, что это полный объект сообщения
+    ];
+}
 }

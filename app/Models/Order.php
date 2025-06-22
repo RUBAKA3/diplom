@@ -31,8 +31,7 @@ class Order extends Model
     }
     public function freelancers()
 {
-    return $this->belongsToMany(User::class, 'order_freelancer', 'order_id', 'freelancer_id')
-        ->where('is_freelancer', true);
+    return $this->belongsToMany(User::class, 'order_freelancer', 'order_id', 'freelancer_id');
 }
 // app/Models/Order.php
 public function category()
@@ -52,5 +51,9 @@ public function files()
 public function attachments()
 {
     return $this->hasMany(OrderAttachment::class);
+}
+public function bids()
+{
+    return $this->hasMany(Bid::class);
 }
 }

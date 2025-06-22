@@ -10,20 +10,21 @@ window.axios = axios;
 window.axios.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
 import Echo from 'laravel-echo';
 
-window.Echo = new Echo({
-    broadcaster: 'pusher',
-    key: import.meta.env.VITE_PUSHER_APP_KEY, // или process.env.MIX_PUSHER_APP_KEY
-    wsHost: window.location.hostname,
-    wsPort: 6001,
-    forceTLS: false,
-    enabledTransports: ['ws', 'wss'], // Важно для отключения long-polling
-});
+window.Pusher = require('pusher-js');
 
-// Подписка на канал
-window.Echo.channel('test-channel')
-    .listen('TestEvent', (data) => {
-        console.log('Получено сообщение:', data);
-    });
+window.Echo = new Echo({
+  broadcaster: 'pusher',
+  key: process.env.MIX_PUSHER_APP_KEY,
+  wsHost: window.location.hostname,
+  wsPort: 6001,
+  forceTLS: false,
+  authEndpoint: 'http://127.0.0.1:8000/api/broadcasting/auth',  // ← Добавьте /api/
+  auth: {
+    headers: {
+      'Authorization': `Bearer ${localStorage.getItem('token')}`,  // Токен Sanctum
+    },
+  },
+});
 /**
  * Echo exposes an expressive API for subscribing to channels and listening
  * for events that are broadcast by Laravel. Echo and event broadcasting

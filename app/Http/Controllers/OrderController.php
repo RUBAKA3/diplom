@@ -7,77 +7,125 @@ use App\Models\Order;
 use App\Models\Skill;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Carbon\Carbon;
 
 class OrderController extends Controller
 {
    public function ordercr(Request $request)
-{
-    $validator = Validator::make($request->all(), [
-        'title' => 'required|string|max:255',
-        'description' => 'required|string',
-        'budget' => 'nullable|numeric|min:0',
-        'deadline_days' => 'nullable|integer|min:1',
-        'category_id' => 'required|exists:categories,id',
-        'skills' => 'nullable|array',
-        'skills.*' => 'string|max:255',
-        'files' => 'nullable',
-        'files.*' => 'file|mimes:jpeg,png,pdf,docx,zip|max:10240',
-        'status' => 'required|in:draft,open' // Добавляем валидацию статуса
-    ]);
+    {
+        // Валидация данных
+        $validator = Validator::make($request->all(), [
+            'title' => 'required|string|max:255',
+            'description' => 'required|string',
+            'budget' => 'required|numeric|min:1',
+            'deadline_days' => 'nullable|integer|min:1',
+            'category_id' => 'required|exists:categories,id',
+            'skills' => 'nullable|array',
+            'skills.*' => 'string|max:255',
+            'files' => 'nullable',
+            'files.*' => 'file|mimes:jpeg,png,pdf,docx,zip|max:10240',
+            'status' => 'required|in:draft,open'
+        ]);
 
-    if ($validator->fails()) {
-        return response()->json([
-            'message' => 'Validation error',
-            'errors' => $validator->errors()
-        ], 422);
-    }
-
-    // Рассчитываем deadline
-    $deadline = $request->has('deadline_days') 
-        ? Carbon::today()->addDays($request->deadline_days)
-        : null;
-
-    // Создаем заказ
-    $order = Order::create([
-        'client_id' => Auth::id(),
-        'title' => $request->title,
-        'description' => $request->description,
-        'budget' => $request->budget,
-        'deadline' => $deadline,
-        'category_id' => $request->category_id,
-        'status' => $request->status, // Используем переданный статус
-    ]);
-
-    // Обрабатываем навыки
-    if ($request->has('skills')) {
-        $skillIds = [];
-        foreach ($request->skills as $skillName) {
-            $skill = Skill::firstOrCreate(['name' => trim($skillName)]);
-            $skillIds[] = $skill->id;
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Validation error',
+                'errors' => $validator->errors()
+            ], 422);
         }
-        $order->skills()->attach($skillIds);
-    }
 
-    // Загружаем файлы
-    if ($request->hasFile('files')) {
-        foreach ($request->file('files') as $file) {
-            $path = $file->store('orders/files', 'public');
-            
-            $order->files()->create([
-                'name' => $file->getClientOriginalName(),
-                'url' => $path,
-                
-            ]);
+        // Для черновиков не проверяем баланс
+        if ($request->status === 'draft') {
+            $order = $this->createOrder($request);
+            return response()->json([
+                'message' => 'Черновик сохранен',
+                'order' => $order,
+                'balance' => Auth::user()->balance
+            ], 201);
+        }
+
+        // Для активных заказов проверяем баланс
+        $user = Auth::user();
+        if ($user->balance < $request->budget) {
+            return response()->json([
+                'message' => 'Недостаточно средств',
+                'current_balance' => $user->balance,
+                'required_amount' => $request->budget
+            ], 422);
+        }
+
+        // Создание заказа и списание средств в транзакции
+        try {
+            DB::beginTransaction();
+
+            // Списываем средства
+            $user->balance -= $request->budget;
+            $user->save();
+
+            // Создаем заказ
+            $order = $this->createOrder($request);
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Заказ создан и средства зарезервированы',
+                'order' => $order,
+                'new_balance' => $user->balance
+            ], 201);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'message' => 'Ошибка при создании заказа',
+                'error' => $e->getMessage()
+            ], 500);
         }
     }
 
-    return response()->json([
-        'message' => $request->status === 'draft' ? 'Draft saved successfully' : 'Order created successfully',
-        'order' => $order->load('skills', 'category', 'files')
-    ], 201);
-}
+    private function createOrder(Request $request)
+    {
+        $orderData = [
+            'client_id' => Auth::id(),
+            'title' => $request->title,
+            'description' => $request->description,
+            'budget' => $request->budget,
+            'category_id' => $request->category_id,
+            'status' => $request->status,
+        ];
+
+        // Добавляем deadline если указан
+        if ($request->has('deadline_days')) {
+            $orderData['deadline'] = Carbon::today()->addDays($request->deadline_days);
+        }
+
+        $order = Order::create($orderData);
+
+        // Прикрепляем навыки
+        if ($request->has('skills')) {
+            $skillIds = [];
+            foreach ($request->skills as $skillName) {
+                $skill = Skill::firstOrCreate(['name' => trim($skillName)]);
+                $skillIds[] = $skill->id;
+            }
+            $order->skills()->attach($skillIds);
+        }
+
+        // Загружаем файлы
+        if ($request->hasFile('files')) {
+            foreach ($request->file('files') as $file) {
+                $path = $file->store('orders/files', 'public');
+                $order->files()->create([
+                    'name' => $file->getClientOriginalName(),
+                    'url' => $path,
+                ]);
+            }
+        }
+
+        return $order->load('skills', 'category', 'files');
+    }
+
 public function userOrders(Request $request)
 {
     $perPage = $request->per_page ?? 10;
@@ -130,6 +178,7 @@ public function cancelOrder(Order $order)
                 'price' => $order->budget ? number_format($order->budget, 0, '', ',') . ' ₽' : 'Договорная',
                 'deadline' => $order->deadline ? Carbon::parse($order->deadline)->format('d.m.Y') : null,
                 'status' => $order->status,
+                'category_id'=>$order->category_id,
                 'client' => [
                     'id' => $order->client->id,
                     'name' => $order->client->name,
@@ -239,46 +288,105 @@ public function cancelOrder(Order $order)
 
         return number_format($budget, 0, '', ' ') . ' ₽';
     }
-    public function show($id)
+    protected function canApply(Order $order)
+{
+    // Если пользователь не авторизован - не может подать заявку
+    if (!auth()->check()) {
+        return false;
+    }
+
+    // Если пользователь - владелец заказа - не может подать заявку
+    if (auth()->id() === $order->client_id) {
+        return false;
+    }
+
+    // Если пользователь не фрилансер - не может подать заявку
+    if (auth()->user()->role !== 'freelancer') {
+        return false;
+    }
+
+    // Если заказ не в статусе 'open' - нельзя подать заявку
+    if ($order->status !== 'open') {
+        return false;
+    }
+
+    // Проверяем, есть ли уже заявка от этого пользователя
+    $hasExistingBid = $order->bids()
+        ->where('freelancer_id', auth()->id())
+        ->exists();
+
+    return !$hasExistingBid;
+}
+ public function show($id)
     {
-        // Получаем заказ по ID
         $order = Order::with([
                 'client', 
                 'skills', 
                 'freelancers',
-                'category'
-            ])->findOrFail($id);
+                'category',
+                'bids' => function($query) {
+                    $query->where('freelancer_id', auth()->id());
+                },
+                'attachments',
+                'files'
+            ])
+            ->withCount('bids')
+            ->findOrFail($id);
 
-        // Форматируем данные для ответа
+        // Преобразуем даты в объекты Carbon
+        $createdAt = Carbon::parse($order->created_at);
+        $deadline = $order->deadline ? Carbon::parse($order->deadline) : null;
+
+        $assignedFreelancer = $order->freelancers->first();
+        $isOwner = auth()->check() && auth()->id() === $order->client_id;
+
         $response = [
-            'isOwner' => false, // Установите это значение в зависимости от логики авторизации
-            'bidAmount' => null,
-            'bidComment' => '',
+            'isOwner' => $isOwner,
+            'can_apply' => $this->canApply($order),
             'order' => [
                 'id' => $order->id,
                 'title' => $order->title,
-                'category' => $order->category->name, // Предполагается, что у категории есть поле name
-                'date' => $this->timeAgo($order->created_at), // Метод для форматирования даты
+                'category' => $order->category->name,
+                'created_at' => $createdAt->format('d.m.Y H:i'),
                 'status' => $order->status,
-                'freelancers_count' => $order->freelancers->count(), // Количество фрилансеров
+                'bids_count' => $order->bids_count,
                 'price' => $order->budget ? number_format($order->budget, 0, '', ',') . ' ₽' : 'Договорная',
-                'budgetType' => 'fixed', // Можно изменить в зависимости от ваших требований
-                'deadline' => $this->timeUntilDeadline($order->deadline),
+                'deadline' => $deadline ? $deadline->format('d.m.Y') : null,
                 'description' => $order->description,
                 'client' => [
                     'id' => $order->client->id,
                     'name' => $order->client->name,
-                    'avatar' => $order->client->avatar_url ?? null
+                    'avatar' => $order->client->avatar_url ?? null,
+                    'rating' => $order->client->rating ?? 0,
+                    'reviews_count' => $order->client->reviews_count ?? 0,
+                    'city' => $order->client->city ?? 'Не указан'
                 ],
-                'skills' => $order->skills->map(function($skill) {
-                return $skill->name;
-            }),
-                'files' => $this->getFiles($order) // Метод для получения файлов
+                'freelancer' => $assignedFreelancer ? [
+                    'id' => $assignedFreelancer->id,
+                    'name' => $assignedFreelancer->name,
+                    'avatar' => $assignedFreelancer->avatar_url ?? null,
+                    'rating' => $assignedFreelancer->rating ?? 0,
+                    'reviews_count' => $assignedFreelancer->reviews_count ?? 0
+                ] : null,
+                'skills' => $order->skills->pluck('name')->toArray(),
+                'files' => $this->getFiles($order),
+                'bids' => $order->bids
             ]
         ];
 
         return response()->json($response);
     }
+    protected function getAttachments(Order $order): array
+{
+    return $order->attachments->map(function ($attachment) {
+        return [
+            'id' => $attachment->id,
+            'name' => $attachment->original_name ?? $attachment->name,
+            'url' => asset('storage/' . $attachment->path), // или Storage::url($attachment->path)
+            'size' => $this->formatFileSize($attachment->size) // форматирует байты в KB/MB
+        ];
+    })->toArray();
+}
     private function getFiles($order)
     {
         return $order->files->map(function ($file) {

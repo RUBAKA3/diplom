@@ -60,8 +60,5 @@ class OrderFrelanser extends Model
     {
         return $this->belongsTo(User::class, 'freelancer_id');
     }
-    public function order_freelancer()
-{
-    return $this->belongsTo(OrderFrelanser::class, 'freelancer_id');
-}
+    
 }

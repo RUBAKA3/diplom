@@ -14,7 +14,10 @@ class Kernel extends ConsoleKernel
     {
         // $schedule->command('inspire')->hourly();
     }
-
+    protected $routeMiddleware = [
+    // ...
+    'admin' => \App\Http\Middleware\AdminMiddleware::class,
+];
     /**
      * Register the commands for the application.
      */
@@ -24,4 +27,9 @@ class Kernel extends ConsoleKernel
 
         require base_path('routes/console.php');
     }
+    protected $middleware = [
+    \Fruitcake\Cors\HandleCors::class, // Должен быть в списке
+    // ...
+    
+];
 }

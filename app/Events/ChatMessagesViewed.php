@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Events;
 
 use Illuminate\Broadcasting\Channel;
@@ -22,7 +23,7 @@ class ChatMessagesViewed implements ShouldBroadcast
 
     public function broadcastOn()
     {
-        return new Channel('chat.'.$this->chatId);
+        return new Channel('chat.' . $this->chatId);
     }
 
     public function broadcastAs()
